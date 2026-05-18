@@ -1,0 +1,135 @@
+{
+    "$schema": "https://cloud.uipath.com/draft/2024-12/entry-point",
+    "$id": "entry-points.json",
+    "entryPoints": [
+        {
+            "filePath": "otter",
+            "uniqueId": "a8546758-2975-42e7-bbce-8a1769861fde",
+            "type": "agent",
+            "input": {
+                "type": "object",
+                "properties": {
+                    "messages": {
+                        "items": {},
+                        "title": "Messages",
+                        "type": "array"
+                    },
+                    "next_agent": {
+                        "title": "Next Agent",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "messages",
+                    "next_agent"
+                ]
+            },
+            "output": {
+                "type": "object",
+                "properties": {
+                    "messages": {
+                        "items": {},
+                        "title": "Messages",
+                        "type": "array"
+                    },
+                    "next_agent": {
+                        "title": "Next Agent",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "messages",
+                    "next_agent"
+                ]
+            },
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "__start__",
+                        "name": "__start__",
+                        "type": "__start__",
+                        "subgraph": null,
+                        "metadata": {}
+                    },
+                    {
+                        "id": "supervisor",
+                        "name": "supervisor",
+                        "type": "node",
+                        "subgraph": null,
+                        "metadata": {}
+                    },
+                    {
+                        "id": "analyst",
+                        "name": "analyst",
+                        "type": "node",
+                        "subgraph": null,
+                        "metadata": {}
+                    },
+                    {
+                        "id": "researcher",
+                        "name": "researcher",
+                        "type": "node",
+                        "subgraph": null,
+                        "metadata": {}
+                    },
+                    {
+                        "id": "writer",
+                        "name": "writer",
+                        "type": "node",
+                        "subgraph": null,
+                        "metadata": {}
+                    },
+                    {
+                        "id": "__end__",
+                        "name": "__end__",
+                        "type": "__end__",
+                        "subgraph": null,
+                        "metadata": {}
+                    }
+                ],
+                "edges": [
+                    {
+                        "source": "__start__",
+                        "target": "supervisor",
+                        "label": null
+                    },
+                    {
+                        "source": "analyst",
+                        "target": "supervisor",
+                        "label": null
+                    },
+                    {
+                        "source": "researcher",
+                        "target": "supervisor",
+                        "label": null
+                    },
+                    {
+                        "source": "supervisor",
+                        "target": "__end__",
+                        "label": null
+                    },
+                    {
+                        "source": "supervisor",
+                        "target": "analyst",
+                        "label": null
+                    },
+                    {
+                        "source": "supervisor",
+                        "target": "researcher",
+                        "label": null
+                    },
+                    {
+                        "source": "supervisor",
+                        "target": "writer",
+                        "label": null
+                    },
+                    {
+                        "source": "writer",
+                        "target": "supervisor",
+                        "label": null
+                    }
+                ]
+            }
+        }
+    ]
+}

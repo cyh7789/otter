@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "otter": "./graph.py:graph"
+  },
+  "env": ".env"
+}

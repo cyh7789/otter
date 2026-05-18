@@ -1,0 +1,15 @@
+[project]
+name = "otter"
+version = "0.1.0"
+description = "Multi-agent supervisor orchestration via LangGraph for UiPath AgentHack Track 2"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Ryugu Labs", email = "fongse@gmail.com" }]
+dependencies = [
+    "langchain-anthropic>=1.4.3",
+    "langchain-google-genai>=4.2.2",
+    "langgraph>=1.2.0",
+    "python-dotenv>=1.2.2",
+    "uipath>=2.10.64",
+    "uipath-langchain>=0.10.24",
+]
