@@ -1,8 +1,12 @@
 # Otter
 
-Multi-agent orchestration via LangGraph + UiPath Cloud Platform.
+**Continuous LLM Agent Evaluation & Auto-Routing** — multi-agent orchestration via LangGraph + UiPath Cloud Platform.
 
 **UiPath AgentHack 2026 — Track 2 (Maestro BPMN) submission.**
+
+> "Whether the vendor breaks or the model silently degrades, your quality stays protected."
+
+See [DESIGN.md](./DESIGN.md) for full architecture, eval methodology, drift detection, UiPath integration, and roadmap.
 
 ## Quickstart
 

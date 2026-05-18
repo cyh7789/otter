@@ -98,12 +98,24 @@ def supervisor(state: State) -> dict:
     }
 
 
+TEAM_CONTEXT = (
+    "The Otter team has exactly three specialists, coordinated by a supervisor:\n"
+    "- analyst — analyzes data, computes metrics, evaluates trade-offs\n"
+    "- researcher — gathers information, summarizes sources, contextualizes\n"
+    "- writer — drafts final user-facing output\n"
+    "Stay in your assigned role. Do not invent other specialists "
+    "(e.g. 'editor', 'reviewer', 'critic'). The team is exactly these three."
+)
+
+
 def make_specialist(role: str, system_prompt: str):
     """Factory for specialist agent nodes — each has a different system prompt."""
 
+    full_prompt = f"{system_prompt}\n\n{TEAM_CONTEXT}"
+
     def node(state: State) -> dict:
         llm = make_llm()
-        system = SystemMessage(content=system_prompt)
+        system = SystemMessage(content=full_prompt)
         response = llm.invoke([system, *state["messages"]])
         return {
             "messages": [
