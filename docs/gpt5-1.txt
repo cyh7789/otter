@@ -1,0 +1,573 @@
+我會先把平台能不能做、架構該不該這樣切、demo 與 production 的需求差異分開判斷。接著核對 Maestro/BPMN 限制，再逐題給可執行建議，避免流程圖為了完整而失控。
+
+已確認 Maestro 支援同一 process 多個 start events，且 message/timer start 可用；所以 Q1 會以多入口共用 downstream 為主，不用單一 dispatcher workaround。
+
+已思考 12m 3s
+
+判斷先講：v1 demo 應該用「一個主流程、兩個 Start Events、trigger-aware evidence plan、結構化 handoff、Canary 子流程」。不要把它做成 10 個 agent 每次全跑的展示，那會像 agent 拼盤，不像可靠的 incident orchestration。以下依你貼的 Otter 問題逐題回覆。
+
+Q1 — START event：1 unified or 2 separate?
+
+Recommendation：C。1 process with 2 start events。
+
+Maestro 官方文件明確寫到同一個 process 可以 model multiple start events，部署後也可以設定 default entry point；Start event 支援 None、Message、Timer，其中 Message 可接 Integration Service event，Timer 可做排程。這正好對應 Reactive webhook 與 Proactive scheduled eval，不需要退回到單一 dispatcher start。
+
+Reasoning：
+Reactive 和 Proactive 的 entry semantics 不同，畫成兩個 start events 比「一個 start event + trigger_type dispatcher」清楚。共同 downstream 可以保留，但兩個入口各自先做 input normalization，避免後面每個 task 都要處理不同 payload shape。
+
+Trade-off：
+你要維護兩套 Start input schema，並確保進入主流程前都轉成同一個 IncidentTrigger。部署時還要設定 default entry point，避免從 Orchestrator 手動啟動時進錯入口。
+
+UiPath/BPMN specifics：
+畫法是：
+
+Message Start: Vendor/Incident Webhook → NormalizeReactiveTrigger
+Timer Start: Scheduled Eval → RunLightweightProbe → Drift? → NormalizeProactiveTrigger
+兩條線匯入同一個 BuildEvidencePlan task。
+
+不要把 dispatcher 放在 START event 本身。dispatcher 應該是第一個 Script/Service Task，名稱叫 Normalize Trigger 或 Build Evidence Plan，輸出統一的：
+
+{
+  "incident_id": "...",
+  "correlation_key": "tenant:vendor:model:window",
+  "trigger_type": "reactive | proactive",
+  "tenant_id": "demo",
+  "environment": "prod",
+  "vendor": "openai | anthropic | google | ...",
+  "model": "...",
+  "observed_at": "...",
+  "trigger_payload_ref": "bucket://..."
+}
+Q2 — Do all 4 investigation agents run for both triggers?
+
+Recommendation：B。Trigger-aware subset。
+
+Reactive 跑 4 個：LogAnalyzer、VendorStatus、Metrics、Dependency。Proactive 不應該預設跑 VendorStatus 和 Dependency，因為 proactive drift/quality degradation 的常見問題不是供應商 outage，而是模型行為、prompt、資料分布、產品 sample 偏移。Proactive 預設跑 LogAnalyzer + Metrics + 深度 Eval；VendorStatus/Dependency 只在 Metrics 顯示 latency/error 異常時補跑。
+
+Reasoning：
+全跑雖然簡單，但會稀釋 demo 重點，也會讓 proactive case 看起來像 reactive incident 的複製品。你真正要展示的是 Maestro 能根據 trigger 做不同 evidence plan，而不是每次盲目 fan-out。
+
+Trade-off：
+BPMN 會多一個 decision layer。代價可以接受，因為這個 decision layer 正是 orchestration 的價值。
+
+UiPath/BPMN specifics：
+兩種畫法都可行：
+
+第一種，demo 可讀性最高：Exclusive Gateway: trigger_type?。Reactive path 後面接 Parallel Gateway，展開 4 個 agent tasks。Proactive path 後面接 Parallel Gateway，只展開 LogAnalyzer + Metrics，然後接 EvalAgent。
+
+第二種，產品化更好：BuildEvidencePlan 產生 list，例如 ["logs", "metrics", "vendor_status"]，再用 Parallel multi-instance task 跑 RunEvidenceAgent。Maestro 支援 parallel multi-instance marker，可以對 List 逐項並行執行，適合 agent set 會變動的場景。
+
+我會用第一種做 hackathon 圖，第二種放進設計說明。
+
+Q3 — Eval vs Drift ordering paradox
+
+Recommendation：你的 hypothesis 成立，但命名要改，否則評審會覺得流程自相矛盾。
+
+分成兩層：
+
+上游 trigger 層：DriftSentinel 或 RoutineEvalMonitor。它是 timer-driven lightweight monitor，只負責決定「是否要開 incident」。
+主流程內：DeepEvalAgent → StatisticalDriftAgent → DiagnosisAgent。DeepEvalAgent 產生 fresh eval scores，StatisticalDriftAgent 用 fresh scores 對 baseline 做統計比較。
+
+Reasoning：
+「drift triggered the pipeline」和「pipeline runs DriftDetector」不矛盾，只要兩者不是同一個責任。上游是 trigger detector，主流程內是 attribution/confirmation detector。
+
+Trade-off：
+你多了一個概念層，文件要講清楚。否則名稱重複會讓流程看起來像 Eval → Drift → Diagnosis 但 Start 又說 Drift 已經發生。
+
+UiPath/BPMN specifics：
+Timer Start 不要直接叫 Drift Detected Start。改成：
+
+Timer Start → RoutineEvalMonitor → Gateway: drift_signal >= threshold?
+
+如果 yes，才進主流程；如果 no，End as No Incident.
+
+主流程內 agent 命名建議：
+
+DeepEvalAgent：針對 incident sample 做 LLM-as-judge。
+StatisticalDriftAgent：對 fresh eval score vs baseline 做 KS/CUSUM/Bayesian test。
+DiagnosisAgent：整合 runtime signals + eval + drift test。
+
+Q4 — HIGH/LOW severity：which agent decides?
+
+Recommendation：C。Diagnosis 設 incident_severity，Routing 設 change_risk，Policy Gate 合併判斷。
+
+incident_severity 是「問題嚴重度」：品質下降、錯誤率、SLA、客戶影響。
+change_risk 是「動作風險」：切模型是否可能造成成本、latency、合規、品質二次傷害。
+
+Reasoning：
+把 severity 和 routing risk 混在一起會導致錯誤決策。例如 incident 很嚴重但 routing 很安全，應快速 canary；也可能 incident 中等但 routing 風險很高，應該需要人工批准。
+
+Trade-off：
+多一個 gate 條件，但語意乾淨很多。
+
+UiPath/BPMN specifics：
+用一個 PolicyGate / Business Rule Task，比讓 Diagnosis 或 Routing 任一方獨裁更好。Maestro 支援 Gateway 與 Business Rule Task execution；條件式可透過 variables/expressions 維護。
+
+建議 gateway expression：
+
+vars.diagnosis.incident_severity === "HIGH" ||
+vars.diagnosis.incident_severity === "CRITICAL" ||
+vars.routing.change_risk === "HIGH" ||
+vars.routing.confidence < vars.policy.min_auto_route_confidence ||
+vars.routing.rollback_available !== true ||
+vars.routing.policy_allowed !== true
+
+路徑：
+
+true → Action Center Approval
+false → Canary / Auto Route
+
+Canary 條件另設：
+
+vars.routing.change_risk !== "LOW" ||
+vars.routing.target_model_prevalidated !== true ||
+vars.routing.traffic_shift_percent > vars.policy.max_direct_shift_percent
+Q5 — Notification + PostMortem：always run or conditional?
+
+Recommendation：B + C。LOW 不 page；HIGH 才 page。Thresholds 放 UiPath Assets。
+
+LOW severity：Slack / Teams channel 訊息、incident note 自動歸檔、不打 PagerDuty。
+HIGH / CRITICAL：PagerDuty、Action Center human gate、customer-facing SLA notification、post-mortem human review。
+
+Reasoning：
+Always notify 會製造 alert fatigue；Always postmortem 會讓低風險 auto-route 變成流程負擔。真正 production best practice 是 severity-based communication + configurable thresholds。
+
+Trade-off：
+你要定義好預設 threshold，不然 customer-configurable 會變成「什麼都可以調」的混亂設定。
+
+UiPath/BPMN specifics：
+UiPath Assets 適合存 shared variables / credentials，作為 policy config 來源合理。
+
+建議可配置 thresholds：
+
+{
+  "page_on_severity": ["HIGH", "CRITICAL"],
+  "customer_notify_on_severity": ["CRITICAL"],
+  "quality_drop_high": 0.08,
+  "quality_drop_critical": 0.15,
+  "error_rate_high": 0.03,
+  "latency_p95_high_ms": 8000,
+  "cost_delta_max_auto_route": 0.25,
+  "min_auto_route_confidence": 0.75,
+  "max_direct_shift_percent": 0,
+  "dedupe_window_minutes": 5,
+  "postmortem_required_if_duration_minutes": 30,
+  "postmortem_required_if_customer_notified": true
+}
+
+PostMortem 不要二分「有 / 沒有」。建議分三種：
+
+Incident Note：LOW，自動生成、自動歸檔。
+Reviewed PostMortem：HIGH，人工確認。
+Customer RCA：CRITICAL 或 customer notification 已發出。
+
+Q6 — CanaryAgent integration
+
+Recommendation：B primary；A optional。Canary 應該是 separate invoked process，不要塞成主流程 parallel branch。
+
+主流程的 RoutingDecisionAgent 產生 CanaryPlan，然後呼叫 Canary sub-process。Daily baseline canary 可以是另一個 Timer Start 或獨立 Canary process，但 demo 不要把它放成主線重點。
+
+Reasoning：
+Canary 是 deployment/control-loop，不是 diagnosis 的同層 investigation agent。它會等待時間窗、觀察 metrics、可能 rollback；塞在同一張主流程圖會讓 incident orchestration 變得太長。
+
+Trade-off：
+子流程需要 correlation key 和 result handoff。這是必要代價。
+
+UiPath/BPMN specifics：
+Maestro 支援 subprocess / call activity，也支援 message/timer events；用 Call Activity: Run Canary Rollout 或 Message End → Canary Process Message Start 都合理。若你希望主流程等待結果，用 call activity 或 Start-and-wait pattern；若希望非同步，用 message 啟動 Canary，再用 message/queue 回寫結果。
+
+Canary 子流程建議：
+
+Start Canary → Shift 1% → Wait 5m → Metrics Check → Eval Check → Gateway Pass? → Shift 5% → ... → Full Route / Rollback
+
+任何 failed metric 都走 Rollback，再回傳：
+
+{
+  "canary_status": "passed | failed | rolled_back",
+  "max_traffic_percent": 5,
+  "reason": "...",
+  "metrics_snapshot_ref": "bucket://..."
+}
+Q7 — Error handling：agent failure path
+
+Recommendation：B + C。先 retry，再 graceful degradation；critical node 才 fail / human escalation。
+
+不要讓 LogAnalyzer timeout 讓整個 incident response 死掉。也不要讓 Diagnosis 在缺關鍵資料時假裝有信心。每個 agent output 都要帶 status, confidence, data_completeness, missing_reasons。
+
+Critical vs degradable：
+
+Critical：TriggerNormalizer, MetricsAgent, DiagnosisAgent, RoutingDecisionAgent, PolicyGate, HIGH severity 的 NotificationAgent。
+Conditionally critical：EvalAgent 與 StatisticalDriftAgent 對 proactive quality incident 是 critical，對 pure vendor outage 可 degradable。
+Degradable：LogAnalyzerAgent, VendorStatusAgent, DependencyAgent, PostMortemAgent。
+
+Reasoning：
+Metrics 是 impact 判斷核心，沒有它就不應該自動切模型。Vendor status page 和 logs 都有價值，但它們不是唯一真相；很多 vendor incident 會先從你自己的 latency/error metrics 看到。
+
+Trade-off：
+partial-data diagnosis 會比較保守，可能把 LOW 升成 human review。這比錯誤 auto-route 好。
+
+UiPath/BPMN specifics：
+Maestro 支援 element-level retries，可設定 max retries、initial delay、backoff type，也支援 error boundary event；Timer boundary event 可做 task timeout。
+
+Pattern：
+
+Agent Task → normal output
+Agent Task + Timer Boundary → Mark timeout evidence
+Agent Task + Error Boundary → Retry exhausted? → Mark failed evidence / Human escalation
+
+對 degradable agent，boundary path 不要丟 Error End，而是輸出：
+
+{
+  "agent": "LogAnalyzerAgent",
+  "status": "timeout",
+  "criticality": "degradable",
+  "evidence": null,
+  "missing_reason": "timeout_after_20s"
+}
+
+對 critical agent：
+
+{
+  "safe_to_auto_route": false,
+  "requires_human": true,
+  "reason": "Metrics unavailable"
+}
+
+然後走 Action Center，而不是自動 route。
+
+Q8 — Action Center gate I/O schema
+
+Recommendation：目前 schema 方向對，但 Gate 1 少了 rollback / policy / confidence；Gate 2 少了 action items / redaction / evidence completeness。
+
+Maestro User Task 支援 human-in-the-loop，並可設定 assignee、task form、inputs、outputs、escalations，也支援 Action Center Action apps。這裡適合做 routing approval 與 postmortem review。
+
+Gate 1：Routing Approval，建議 input 增加：
+
+{
+  "incident_id": "...",
+  "severity": "HIGH",
+  "diagnosis_summary": "...",
+  "root_cause_hypothesis": "...",
+  "confidence": 0.81,
+  "data_completeness": 0.75,
+  "missing_evidence": ["DependencyAgent timeout"],
+  "current_model": "gpt-...",
+  "target_model": "claude-...",
+  "change_risk": "MEDIUM",
+  "policy_allowed": true,
+  "policy_reasons": ["cost_delta_within_limit", "model_in_allowlist"],
+  "estimated_quality_delta": 0.04,
+  "estimated_latency_delta_ms": 900,
+  "estimated_cost_delta": 0.18,
+  "blast_radius": {
+    "traffic_percent": 10,
+    "affected_customers": 3,
+    "sla_tier": "enterprise"
+  },
+  "canary_plan": {
+    "steps": [1, 5, 25, 100],
+    "rollback_condition": "error_rate > baseline + 2%"
+  },
+  "rollback_plan": "...",
+  "similar_incidents": [],
+  "evidence_refs": ["bucket://..."]
+}
+
+Gate 1 output：
+
+{
+  "decision": "approve | reject | modify | wait_for_more_data",
+  "override_target_model": null,
+  "override_traffic_percent": null,
+  "require_canary": true,
+  "comment": "...",
+  "approver": "...",
+  "expires_at": "..."
+}
+
+UX 上不要先丟 raw data。第一屏只放「decision summary + risk + recommended action」。Evidence、logs、eval scores 放可展開區。Override target model 時必填 reason。
+
+Gate 2：PostMortem Review，建議 input 增加：
+
+{
+  "incident_timeline": [],
+  "customer_impact": "...",
+  "root_cause": "...",
+  "contributing_factors": [],
+  "what_worked": [],
+  "what_failed": [],
+  "action_items": [
+    {"owner": "...", "due_date": "...", "task": "..."}
+  ],
+  "redaction_required": true,
+  "raw_evidence_refs": [],
+  "model_policy_version": "...",
+  "routing_policy_version": "...",
+  "baseline_version": "..."
+}
+
+Gate 2 output：
+
+{
+  "decision": "approve_as_is | edit | require_more_data | mark_not_incident",
+  "edited_postmortem": "...",
+  "requested_data": ["more logs", "customer impact count"],
+  "approved_for_customer": false,
+  "reviewer_comments": "..."
+}
+
+Trade-off：
+Gate schema 變大，但這是 human gate 真正有決策能力的條件。只給 summary 和 proposed route，人在 HIGH severity 下其實無法負責任批准。
+
+Q9 — State management for concurrent incidents
+
+Recommendation：process variables 當 instance-local state；shared state 只走 Queue / Bucket / DataFabric / external store。不要用 global variables 存 incident mutable state。
+
+Maestro 文件區分 global variables 與 process instance variables：global variables 會跨同 process instances 持久共享；variables 則是某個 process instance 的 local state。這表示你的「單一 incident 狀態」應該放在 instance variables，而 baseline、policy、shared incident index 才能放共享資源。
+
+Reasoning：
+兩個 vendor 同時壞掉時，最危險的是共享 baseline、routing decision、notification dedupe 狀態互相覆蓋。所有 mutable shared write 都要有 key 和版本。
+
+Trade-off：
+多一層 storage discipline。這比 demo 後期才發現 concurrent incidents 會互相污染好。
+
+UiPath patterns：
+
+Incident identity：
+
+incident_id = uuid
+correlation_key = tenant_id + ":" + vendor + ":" + model + ":" + incident_type + ":" + time_window
+custom_instance_id = correlation_key
+
+Maestro 支援 custom instance ID，可用 runtime data 產生人類可讀 label；但目前文件也寫到 custom instance ID 在 instance management、Insights、Process Mining 尚未支援 search/filter，所以它適合顯示，不適合當唯一 dedupe mechanism。
+
+Shared-state rules：
+
+Queue：存 incident event / dedupe lock。開啟 unique references。UiPath Queue 支援 unique references；若 by reference dequeue，官方也提醒 reference 要 unique，否則會有 concurrency access issue。
+Bucket：存 large evidence，例如 logs、eval samples、raw outputs。Queue item Specific Data 有大小限制，超過應存 external storage，只在 item 裡放 reference。
+Assets：只放 policy/config/credential，不放 mutable incident state。
+Baseline：用 versioned baseline，例如 baseline:model:date:version，不要讓 incident process 直接覆寫 current baseline。
+Routing state：每次 routing decision 要寫 decision_id, policy_version, model_version, approved_by, rollback_ref。
+
+Q10 — Idempotency on flapping triggers
+
+Recommendation：B for v1 demo；C as roadmap。
+
+v1 用 5 分鐘 dedupe window。相同 tenant + vendor + model + incident_type 在 window 內，只允許一個 active incident process。後續 flapping event 不啟動新 process，但要 append 到 evidence store，不要直接丟掉。
+
+Reasoning：
+Always new process 會導致重複 routing decision，這是 auto-routing 系統不能犯的錯。Attach pattern 比較正確，但需要 reliable correlation / message ingestion / shared incident store，demo 期不必硬做。
+
+Trade-off：
+B 會把後續事件當成同一 incident，可能吞掉一個真正的新事件。用短 window + status transition key 可以降低風險。
+
+UiPath/BPMN specifics：
+
+在 webhook 進入主 Maestro process 前，先做 DedupeCheck：
+
+dedupe_key = tenant_id:vendor:model:incident_type:floor(now / 5m)
+
+實作方式：
+
+寫入 Queue，reference = dedupe_key，queue 開啟 unique references。
+如果 insert 成功，啟動主 process。
+如果 duplicate，寫入 bucket://incidents/{correlation_key}/flaps/{timestamp}.json，然後 End as Duplicate Attached.
+
+UiPath Queue 的 unique reference 是這裡最直接的 v1 機制。
+
+C 的 roadmap：主流程加一個 non-interrupting message boundary event 或 receive task，接收 same correlation key 的 update event。Maestro 支援 Message boundary event 與 Receive Task / Wait for connector event，但我沒有在官方文件中看到足夠明確的「BPMN correlation key」機制說明；所以 C 應該靠外部 incident store/queue 來做 correlation，不要假設 Maestro engine 會自動幫你關聯同一 incident。
+
+Q11 — Timeout strategy for parallel investigation agents
+
+Recommendation：B。Incident response 用 aggressive timeout + partial data。
+
+預設值我會這樣設：
+
+MetricsAgent: 8s
+VendorStatusAgent: 5s
+DependencyAgent: 8s
+LogAnalyzerAgent: 20s，且只讀 sampled logs / top errors，不讀完整 1GB
+EvalAgent reactive path: 30s
+EvalAgent proactive path: 60–120s
+Overall investigation budget: 25s for reactive, 90s for proactive
+
+Reasoning：
+Reactive incident 的第一輪目標是「安全決策」，不是完整 RCA。PostMortem 可以慢，routing decision 不能等 1GB log 分析完。
+
+Trade-off：
+會提高 partial-data diagnosis 的比例。解法不是延長全部 timeout，而是讓 Diagnosis 明確輸出 data_completeness，HIGH severity gate 讓 human 選 wait_for_more_data。
+
+UiPath/BPMN specifics：
+每個 agent task 加 interrupting Timer Boundary Event。timeout path 回傳 status=timeout，不要讓 join deadlock。Maestro 的 timer boundary event 可中斷 task 並走 boundary flow。
+
+Q12 — Inter-agent output schema
+
+Recommendation：C。LangGraph internal 用 messages；BPMN/cross-agent boundaries 用 Pydantic。
+
+邊界如下：
+
+Internal：agent 裡面可以用 LangChain/LangGraph messages、tool calls、scratchpad。
+Cross-boundary：任何要進 Maestro variable、Gateway condition、Action Center、Queue、Bucket index 的資料，都要 Pydantic/JSON structured。
+Critical handoff：Eval → Drift、Evidence → Diagnosis、Diagnosis → Routing、Routing → PolicyGate/Canary、HumanGate → Execution，一律 structured。
+
+Reasoning：
+Messages 很適合 agent reasoning，但不適合 BPMN gateway 和 audit。Routing 這種流程決策不能靠 downstream parse natural language。
+
+Trade-off：
+多 boilerplate，但換來 type safety、debuggability、auditability。
+
+建議核心 models：
+
+from enum import Enum
+from typing import Any, Literal
+from pydantic import BaseModel, Field
+
+
+class TriggerType(str, Enum):
+    reactive = "reactive"
+    proactive = "proactive"
+
+
+class Severity(str, Enum):
+    low = "LOW"
+    medium = "MEDIUM"
+    high = "HIGH"
+    critical = "CRITICAL"
+
+
+class AgentStatus(str, Enum):
+    ok = "ok"
+    timeout = "timeout"
+    failed = "failed"
+    skipped = "skipped"
+
+
+class IncidentTrigger(BaseModel):
+    incident_id: str
+    correlation_key: str
+    trigger_type: TriggerType
+    tenant_id: str
+    environment: Literal["dev", "staging", "prod"]
+    vendor: str | None = None
+    model: str | None = None
+    observed_at: str
+    payload_ref: str | None = None
+
+
+class EvidencePacket(BaseModel):
+    incident_id: str
+    agent_name: str
+    status: AgentStatus
+    criticality: Literal["critical", "degradable"]
+    summary: str | None = None
+    confidence: float = Field(ge=0, le=1)
+    data_completeness: float = Field(ge=0, le=1)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[str] = Field(default_factory=list)
+    missing_reason: str | None = None
+
+
+class EvalBatchResult(BaseModel):
+    incident_id: str
+    sample_id: str
+    judge_model: str
+    rubric_version: str
+    baseline_version: str
+    scores: dict[str, float]
+    per_item_refs: list[str]
+    confidence: float = Field(ge=0, le=1)
+
+
+class DriftSignal(BaseModel):
+    incident_id: str
+    drift_detected: bool
+    test_name: str
+    statistic: float
+    p_value: float | None = None
+    posterior_probability: float | None = None
+    affected_rubrics: list[str]
+    severity_hint: Severity
+    baseline_version: str
+
+
+class DiagnosisReport(BaseModel):
+    incident_id: str
+    incident_severity: Severity
+    root_cause_hypothesis: str
+    confidence: float = Field(ge=0, le=1)
+    data_completeness: float = Field(ge=0, le=1)
+    evidence_used: list[str]
+    evidence_missing: list[str]
+    customer_impact_summary: str
+    safe_to_auto_route: bool
+
+
+class RoutingProposal(BaseModel):
+    incident_id: str
+    from_model: str
+    to_model: str
+    change_risk: Severity
+    confidence: float = Field(ge=0, le=1)
+    expected_quality_delta: float | None = None
+    expected_latency_delta_ms: float | None = None
+    expected_cost_delta_ratio: float | None = None
+    policy_allowed: bool
+    policy_reasons: list[str]
+    rollback_available: bool
+    canary_required: bool
+
+
+class ApprovalDecision(BaseModel):
+    incident_id: str
+    decision: Literal["approve", "reject", "modify", "wait_for_more_data"]
+    override_target_model: str | None = None
+    override_traffic_percent: int | None = None
+    require_canary: bool = True
+    comment: str | None = None
+    approver: str
+
+
+class CanaryResult(BaseModel):
+    incident_id: str
+    status: Literal["passed", "failed", "rolled_back"]
+    max_traffic_percent: int
+    reason: str
+    metrics_ref: str
+
+關鍵原則：大資料永遠用 *_ref 指到 Bucket，不塞進 Queue item 或 process variable。這也符合 Queue item Specific Data 不適合放大型 payload 的限制。
+
+Q13 — Multi-tenancy
+
+Recommendation：同意 defer。Demo 做 single-tenant，但 schema 保留 tenant_id 和 namespace prefix。
+
+不要為 hackathon demo 做完整 SaaS multi-tenancy。那會吃掉設計時間，且評審不一定買單。你只需要證明「以後能長成 multi-tenant」，不是現在就做 per-tenant RBAC、quota、billing、rubric marketplace。
+
+Reasoning：
+Otter 的 v1 風險不在 multi-tenancy，而在 routing decision 是否可信、是否可 rollback、是否有 human gate 和 audit trail。先把這些做紮實。
+
+Trade-off：
+Demo 不能宣稱 production-ready SaaS。可以宣稱 single-tenant incident orchestration prototype with multi-tenant-ready naming.
+
+Lightweight pattern：
+
+Asset key: otter.{tenant_id}.{env}.routing_policy
+Asset key: otter.{tenant_id}.{env}.eval_rubric
+Queue: otter-{tenant_id}-{env}-incident-events
+Bucket path: /otter/{tenant_id}/{env}/incidents/{incident_id}/...
+Baseline key: baseline:{tenant_id}:{model}:{rubric_version}:{date}
+
+保留 tenant_id，但不要實作 tenant admin console。
+
+Bonus — 我會額外 flag 的問題
+
+第一，你的文件說「9 agent roles」，但列表實際上是 10 個，另外還有 CanaryAgent。這種小錯在 hackathon 會被看見，建議改成「10 core agents + Canary subprocess」，或合併 Notification/PostMortem 成 CommsAgent。
+
+第二，缺一個 PolicyGuardAgent 或 PolicyGate。Auto-routing 不是單純模型選擇問題，而是 production change control。它應該檢查 allowlist、cost ceiling、latency ceiling、data residency、PII/vendor policy、rollback availability。沒有這個 gate，auto-routing 會顯得危險。
+
+第三，VendorStatusAgent 不該被設計成核心真相。供應商 status page 常常比自家 metrics 晚；Otter 的可信度應該來自「customer-observed metrics + eval degradation」，不是 status page。
+
+第四，LLM-as-judge 本身也會 drift。至少要 pin judge model、rubric version、golden set version，並在 PostMortem 裡記錄 judge_model, rubric_version, baseline_version。
+
+第五，routing action 要有 kill switch。即使 LOW severity auto-routed，也要有 post-route monitoring window；如果 error_rate 或 quality score 惡化，自動 rollback。
+
+第六，BPMN 圖不要展示 10 個 agent 平鋪。主圖只放 5 個區塊：Trigger、Evidence Collection、Eval/Drift、Decision/Gate、Canary/Notify/PostMortem。Agent 細節放 subprocess。這會比「agent 數量很多」更像 Track 2 的流程設計。

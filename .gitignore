@@ -15,3 +15,6 @@ wheels/
 # UiPath build artifacts & auth cache
 .uipath/
 __uipath/
+
+# macOS
+.DS_Store
