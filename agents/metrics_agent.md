@@ -117,5 +117,5 @@ MetricsAgent's correctness is measured by:
 
 ## Open items
 - Define `MetricsAgentInput` schema in `docs/evidence-collection.md`.
-- Metric source binding: hackathon demo uses Splunk telemetry (overlaps Muntjac stack but separate submission). Production supports Datadog + Prometheus + Cloud Monitoring + Splunk.
+- Metric source binding for hackathon demo: Otter is observability-backend-agnostic. v1 demo may use Datadog / Prometheus / Splunk / Cloud Monitoring depending on which surfaces cleanest sample telemetry. Production supports all four via adapter.
 - Cost metric source: most LLM providers don't expose per-request cost; we may need to compute it inline from token counts × pricing. v1 may skip cost metric and let CostBudgetSnapshot service own it.

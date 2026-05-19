@@ -108,5 +108,5 @@ Weekly shadow runs over labeled past incidents.
 
 ## Open items
 - Define `LogAnalyzerInput` schema in `docs/evidence-collection.md` (new sub-doc — Block 2 evidence agents need a shared owner).
-- Decide log source binding: hackathon demo uses Splunk (Muntjac overlap risk — but Otter is a separate Devpost submission so OK). Production may support Datadog / Loki / GCP Cloud Logging.
+- Decide log source binding for hackathon demo. Otter is platform-agnostic on observability backends; v1 demo may use Datadog / Splunk / Loki / GCP Cloud Logging depending on which has the cleanest tenant sample data. Production supports all four via adapter.
 - PII scrubbing: should `summary` go through a PII filter even though the prompt forbids raw content? Defense in depth says yes; v1 may skip if demo data has no PII.
