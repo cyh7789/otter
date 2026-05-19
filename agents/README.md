@@ -15,21 +15,33 @@ Schemas live in `../docs/*.md` (single source). Do not duplicate them here — r
 
 | # | Agent | Block | Sub-doc | Spec file |
 |---|-------|-------|---------|-----------|
-| 1 | LogAnalyzerAgent | 2 Evidence | — | `log_analyzer_agent.md` (TODO) |
-| 2 | VendorStatusAgent | 2 Evidence | — | `vendor_status_agent.md` (TODO) |
-| 3 | MetricsAgent | 2 Evidence | — | `metrics_agent.md` (TODO) |
-| 4 | DependencyAgent | 2 Evidence | — | `dependency_agent.md` (TODO) |
-| 5 | **EvalAgent** | 3 Eval+Drift | `eval-drift-baseline.md` | `eval_agent.md` |
-| 6 | **DriftDetectorAgent** | 3 Eval+Drift | `eval-drift-baseline.md` | `drift_detector_agent.md` |
-| 7 | DiagnosisAgent | 4 Decision | — | `diagnosis_agent.md` (TODO) |
-| 8 | **RoutingDecisionAgent** | 4 Decision | `cost-aware-routing.md` | `routing_decision_agent.md` |
-| 9 | RecoveryEvaluator | lifecycle.RESTORE | `lifecycle.md` | `recovery_evaluator.md` (TODO) |
-| 10 | ModelIdentityMonitor | independent timer | `model-identity.md` | `model_identity_monitor.md` (TODO) |
+| 1 | LogAnalyzerAgent | 2 Evidence | — | `log_analyzer_agent.md` ✓ |
+| 2 | VendorStatusAgent | 2 Evidence | — | `vendor_status_agent.md` ✓ |
+| 3 | MetricsAgent | 2 Evidence | — | `metrics_agent.md` ✓ |
+| 4 | DependencyAgent | 2 Evidence | — | `dependency_agent.md` ✓ |
+| 5 | EvalAgent | 3 Eval+Drift | `eval-drift-baseline.md` | `eval_agent.md` ✓ |
+| 6 | DriftDetectorAgent | 3 Eval+Drift | `eval-drift-baseline.md` | `drift_detector_agent.md` ✓ |
+| 7 | DiagnosisAgent | 4 Decision | — | `diagnosis_agent.md` ✓ |
+| 8 | RoutingDecisionAgent | 4 Decision | `cost-aware-routing.md` | `routing_decision_agent.md` ✓ |
+| 9 | RecoveryEvaluator | lifecycle.RESTORE | `lifecycle.md` | `recovery_evaluator.md` ✓ |
+| 10 | ModelIdentityMonitor | independent timer | `model-identity.md` | `model_identity_monitor.md` ✓ |
 | — | PolicyExplainerAgent | 4 Decision (optional) | `policy-gate.md` | `policy_explainer_agent.md` (TODO) |
 | — | NotificationAgent | 5 Canary async tail | — | `notification_agent.md` (TODO) |
 | — | PostMortemAgent | 5 Canary async tail | — | `post_mortem_agent.md` (TODO) |
 
-W1 priority (5/19–5/25): bold rows above — 3 most schema-complete agents written first as templates.
+10 core LLM agents written (5/19). 3 support agents (PolicyExplainer / Notification / PostMortem) deferred — they are async tail / optional and not in the critical demo path.
+
+## Cross-cutting open items
+
+The agent specs surface schema gaps that need sub-doc revisions:
+
+- `EvidencePacket` is shared by all 4 Block 2 agents but each agent has unique input. **Action**: create `docs/evidence-collection.md` to own LogAnalyzerInput / VendorStatusInput / MetricsAgentInput / DependencyAgentInput.
+- `DiagnosisOutput` schema referenced by RoutingDecisionAgent but not yet in any sub-doc. **Action**: add to either new `docs/diagnosis.md` or extend `eval-drift-baseline.md`.
+- `RoutingProposal` (composite wrapping `RouteUtilityEstimate` list + recommendation) not yet a Pydantic class. **Action**: add to `cost-aware-routing.md`.
+- `ModelIdentityReport` + `IdentityBaseline` referenced by ModelIdentityMonitor. **Action**: add to `model-identity.md`.
+- `ProbeResult` schema used in multiple agents. **Action**: add to either `docs/probes.md` (new) or to `model-identity.md`.
+
+These schema additions are W2 work (5/26–6/01) — implementation phase needs them resolved before code can call agents with typed contracts.
 
 ## Spec file template
 
