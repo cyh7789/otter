@@ -1,4 +1,18 @@
 {
-    "version": "2.0",
-    "resources": []
+  "version": "2.0",
+  "resources": [
+    {
+      "name": "GOOGLE_API_KEY",
+      "type": "api_credential",
+      "description": "Gemini API key for the live LLM call paths. Not required for --fixture mode.",
+      "required": false
+    },
+    {
+      "name": "GEMINI_MODEL",
+      "type": "config_string",
+      "description": "Gemini model id (default: gemini-3-flash-preview).",
+      "required": false,
+      "default": "gemini-3-flash-preview"
+    }
+  ]
 }

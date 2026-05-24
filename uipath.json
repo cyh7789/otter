@@ -4,12 +4,39 @@
     "isConversational": false
   },
   "packOptions": {
-    "fileExtensionsIncluded": [],
-    "filesIncluded": [],
-    "filesExcluded": [],
-    "directoriesExcluded": [],
+    "fileExtensionsIncluded": [".py", ".json", ".md", ".lock", ".toml"],
+    "filesIncluded": [
+      "main.py",
+      "graph.py",
+      "schemas.py",
+      "uipath.json",
+      "bindings.json",
+      "entry-points.json",
+      "langgraph.json",
+      "project.uiproj",
+      "pyproject.toml",
+      "uv.lock",
+      "README.md"
+    ],
+    "filesExcluded": [".env", ".env.example", "HANDOFF.md"],
+    "directoriesExcluded": [
+      ".venv",
+      ".uv-cache",
+      "__pycache__",
+      ".pytest_cache",
+      "__uipath"
+    ],
     "includeUvLock": true
   },
   "functions": {},
-  "agents": {}
+  "agents": {
+    "otter": {
+      "entryPoint": "otter",
+      "description": "Governed LLM Runtime Change Control loop — detects vendor outage and silent model quality drift, proposes a route swap, and gates the change through Policy + Canary.",
+      "category": "ai-agent",
+      "type": "langgraph",
+      "inputType": "object",
+      "outputType": "object"
+    }
+  }
 }

@@ -1,135 +1,599 @@
 {
-    "$schema": "https://cloud.uipath.com/draft/2024-12/entry-point",
-    "$id": "entry-points.json",
-    "entryPoints": [
-        {
-            "filePath": "otter",
-            "uniqueId": "a8546758-2975-42e7-bbce-8a1769861fde",
-            "type": "agent",
-            "input": {
-                "type": "object",
-                "properties": {
-                    "messages": {
-                        "items": {},
-                        "title": "Messages",
-                        "type": "array"
-                    },
-                    "next_agent": {
-                        "title": "Next Agent",
-                        "type": "string"
-                    }
-                },
-                "required": [
-                    "messages",
-                    "next_agent"
-                ]
-            },
-            "output": {
-                "type": "object",
-                "properties": {
-                    "messages": {
-                        "items": {},
-                        "title": "Messages",
-                        "type": "array"
-                    },
-                    "next_agent": {
-                        "title": "Next Agent",
-                        "type": "string"
-                    }
-                },
-                "required": [
-                    "messages",
-                    "next_agent"
-                ]
-            },
-            "graph": {
-                "nodes": [
-                    {
-                        "id": "__start__",
-                        "name": "__start__",
-                        "type": "__start__",
-                        "subgraph": null,
-                        "metadata": {}
-                    },
-                    {
-                        "id": "supervisor",
-                        "name": "supervisor",
-                        "type": "node",
-                        "subgraph": null,
-                        "metadata": {}
-                    },
-                    {
-                        "id": "analyst",
-                        "name": "analyst",
-                        "type": "node",
-                        "subgraph": null,
-                        "metadata": {}
-                    },
-                    {
-                        "id": "researcher",
-                        "name": "researcher",
-                        "type": "node",
-                        "subgraph": null,
-                        "metadata": {}
-                    },
-                    {
-                        "id": "writer",
-                        "name": "writer",
-                        "type": "node",
-                        "subgraph": null,
-                        "metadata": {}
-                    },
-                    {
-                        "id": "__end__",
-                        "name": "__end__",
-                        "type": "__end__",
-                        "subgraph": null,
-                        "metadata": {}
-                    }
+  "$schema": "https://cloud.uipath.com/draft/2024-12/entry-point",
+  "$id": "entry-points.json",
+  "entryPoints": [
+    {
+      "filePath": "otter",
+      "uniqueId": "a8546758-2975-42e7-bbce-8a1769861fde",
+      "type": "agent",
+      "input": {
+        "type": "object",
+        "properties": {
+          "trigger": {
+            "additionalProperties": false,
+            "description": "Entry point for the graph. Produced by TriggerIntake from either a\nreactive alert (paging system) or a proactive eval/drift signal.",
+            "properties": {
+              "incident_id": {
+                "title": "Incident Id",
+                "type": "string"
+              },
+              "trigger_type": {
+                "enum": [
+                  "reactive",
+                  "proactive"
                 ],
-                "edges": [
-                    {
-                        "source": "__start__",
-                        "target": "supervisor",
-                        "label": null
+                "title": "Trigger Type",
+                "type": "string"
+              },
+              "correlation_key": {
+                "description": "Stable key for dedup across the lifecycle.",
+                "title": "Correlation Key",
+                "type": "string"
+              },
+              "timestamp": {
+                "format": "date-time",
+                "title": "Timestamp",
+                "type": "string"
+              },
+              "source": {
+                "default": "manual",
+                "description": "e.g. 'pagerduty', 'eval_scheduler', 'manual', 'fixture'.",
+                "title": "Source",
+                "type": "string"
+              },
+              "raw_signal": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Original payload (alert body / drift detector output).",
+                "title": "Raw Signal"
+              }
+            },
+            "required": [
+              "incident_id",
+              "trigger_type",
+              "correlation_key",
+              "timestamp"
+            ],
+            "title": "IncidentTrigger",
+            "type": "object"
+          },
+          "fixture_mode": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, every node returns deterministic mock data and skips outbound LLM calls."
+          }
+        },
+        "required": [
+          "trigger"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "diagnosis": {
+            "$defs": {
+              "SignalWeights": {
+                "additionalProperties": false,
+                "properties": {
+                  "metrics_weight": {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "title": "Metrics Weight",
+                    "type": "number"
+                  },
+                  "logs_weight": {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "title": "Logs Weight",
+                    "type": "number"
+                  },
+                  "dependency_weight": {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "title": "Dependency Weight",
+                    "type": "number"
+                  },
+                  "vendor_weight": {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "title": "Vendor Weight",
+                    "type": "number"
+                  },
+                  "eval_drift_weight": {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "title": "Eval Drift Weight",
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "metrics_weight",
+                  "logs_weight",
+                  "dependency_weight",
+                  "vendor_weight",
+                  "eval_drift_weight"
+                ],
+                "title": "SignalWeights",
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "description": "DiagnosisAgent's structured hypothesis. RoutingDecisionAgent consumes\nthis \u2014 DiagnosisAgent never proposes a remediation itself.",
+            "properties": {
+              "incident_id": {
+                "title": "Incident Id",
+                "type": "string"
+              },
+              "root_cause": {
+                "enum": [
+                  "vendor_outage_confirmed",
+                  "vendor_silent_degradation",
+                  "dependency_degradation",
+                  "model_quality_drift",
+                  "capacity_pressure",
+                  "schema_break",
+                  "auth_failure",
+                  "cost_spike",
+                  "unknown"
+                ],
+                "title": "Root Cause",
+                "type": "string"
+              },
+              "root_cause_explanation": {
+                "maxLength": 400,
+                "title": "Root Cause Explanation",
+                "type": "string"
+              },
+              "incident_severity": {
+                "enum": [
+                  "LOW",
+                  "MEDIUM",
+                  "HIGH",
+                  "CRITICAL"
+                ],
+                "title": "Incident Severity",
+                "type": "string"
+              },
+              "diagnosis_confidence": {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "title": "Diagnosis Confidence",
+                "type": "number"
+              },
+              "affected_rubrics": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Affected Rubrics",
+                "type": "array"
+              },
+              "signal_summary": {
+                "$ref": "#/$defs/SignalWeights"
+              },
+              "conflicting_signals": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Conflicting Signals",
+                "type": "array"
+              },
+              "recommended_evidence_focus": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
                     },
-                    {
-                        "source": "analyst",
-                        "target": "supervisor",
-                        "label": null
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Recommended Evidence Focus"
+              },
+              "evidence_bundle_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Evidence Bundle Ref"
+              },
+              "eval_drift_report_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Eval Drift Report Ref"
+              }
+            },
+            "required": [
+              "incident_id",
+              "root_cause",
+              "root_cause_explanation",
+              "incident_severity",
+              "diagnosis_confidence",
+              "signal_summary"
+            ],
+            "title": "DiagnosisOutput",
+            "type": "object"
+          },
+          "routing_proposal": {
+            "$defs": {
+              "RouteUtilityEstimate": {
+                "additionalProperties": false,
+                "description": "One candidate model/route option scored on the multi-objective frontier.",
+                "properties": {
+                  "model_id": {
+                    "title": "Model Id",
+                    "type": "string"
+                  },
+                  "provider": {
+                    "default": "",
+                    "description": "e.g. anthropic, openai, google.",
+                    "title": "Provider",
+                    "type": "string"
+                  },
+                  "quality_delta": {
+                    "description": "Estimated quality change vs current route (positive = better).",
+                    "title": "Quality Delta",
+                    "type": "number"
+                  },
+                  "cost_delta_usd": {
+                    "description": "Estimated $ per 1K requests change vs current route.",
+                    "title": "Cost Delta Usd",
+                    "type": "number"
+                  },
+                  "latency_delta_ms": {
+                    "default": 0.0,
+                    "title": "Latency Delta Ms",
+                    "type": "number"
+                  },
+                  "confidence": {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "title": "Confidence",
+                    "type": "number"
+                  },
+                  "pareto_rank": {
+                    "minimum": 0,
+                    "title": "Pareto Rank",
+                    "type": "integer"
+                  },
+                  "notes": {
+                    "items": {
+                      "type": "string"
                     },
-                    {
-                        "source": "researcher",
-                        "target": "supervisor",
-                        "label": null
+                    "title": "Notes",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "model_id",
+                  "quality_delta",
+                  "cost_delta_usd",
+                  "confidence",
+                  "pareto_rank"
+                ],
+                "title": "RouteUtilityEstimate",
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "description": "RoutingDecisionAgent output. PolicyGate validates against constraints\nbefore any route swap is allowed to take effect.",
+            "properties": {
+              "incident_id": {
+                "title": "Incident Id",
+                "type": "string"
+              },
+              "candidates": {
+                "items": {
+                  "$ref": "#/$defs/RouteUtilityEstimate"
+                },
+                "title": "Candidates",
+                "type": "array"
+              },
+              "recommended": {
+                "$ref": "#/$defs/RouteUtilityEstimate"
+              },
+              "change_risk": {
+                "enum": [
+                  "LOW",
+                  "MEDIUM",
+                  "HIGH",
+                  "CRITICAL"
+                ],
+                "title": "Change Risk",
+                "type": "string"
+              },
+              "routing_confidence": {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "title": "Routing Confidence",
+                "type": "number"
+              },
+              "temporary_route_ttl_minutes": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Temporary Route Ttl Minutes"
+              },
+              "route_type": {
+                "enum": [
+                  "quality_rescue",
+                  "cost_saving",
+                  "latency_rescue"
+                ],
+                "title": "Route Type",
+                "type": "string"
+              },
+              "route_direction": {
+                "enum": [
+                  "forward",
+                  "restore"
+                ],
+                "title": "Route Direction",
+                "type": "string"
+              },
+              "notes": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Notes",
+                "type": "array"
+              }
+            },
+            "required": [
+              "incident_id",
+              "candidates",
+              "recommended",
+              "change_risk",
+              "routing_confidence",
+              "route_type",
+              "route_direction"
+            ],
+            "title": "RoutingProposal",
+            "type": "object"
+          },
+          "policy_decision": {
+            "additionalProperties": false,
+            "description": "PolicyGate output. Auditable per-decision record \u2014 `reason` must\ncite which policy rule fired.",
+            "properties": {
+              "incident_id": {
+                "title": "Incident Id",
+                "type": "string"
+              },
+              "decision": {
+                "enum": [
+                  "allow_auto",
+                  "require_canary",
+                  "require_human",
+                  "deny"
+                ],
+                "title": "Decision",
+                "type": "string"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              },
+              "policy_version": {
+                "default": "v1-inline",
+                "description": "Identifier for the rule set evaluated (v1 = inline, v2+ = Git-backed DMN).",
+                "title": "Policy Version",
+                "type": "string"
+              },
+              "rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Specific rule that produced the decision, if applicable.",
+                "title": "Rule Id"
+              }
+            },
+            "required": [
+              "incident_id",
+              "decision",
+              "reason"
+            ],
+            "title": "PolicyDecision",
+            "type": "object"
+          },
+          "kill_switch": {
+            "additionalProperties": false,
+            "description": "CanaryMonitor's verdict at the end of the guard window.",
+            "properties": {
+              "incident_id": {
+                "title": "Incident Id",
+                "type": "string"
+              },
+              "rollback": {
+                "title": "Rollback",
+                "type": "boolean"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              },
+              "metric_breached": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Name of the metric that crossed the kill-switch threshold, or null if no breach.",
+                "title": "Metric Breached"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "canary_duration_seconds": {
+                "minimum": 0.0,
+                "title": "Canary Duration Seconds",
+                "type": "number"
+              }
+            },
+            "required": [
+              "incident_id",
+              "rollback",
+              "reason",
+              "observed_at",
+              "canary_duration_seconds"
+            ],
+            "title": "KillSwitchDecision",
+            "type": "object"
+          },
+          "evidence_bundle": {
+            "$defs": {
+              "EvidencePacket": {
+                "additionalProperties": false,
+                "description": "One agent's contribution to the evidence bundle. Status + criticality\nlet DiagnosisAgent decide whether a packet is trustworthy and whether a\nfailed packet is fatal.",
+                "properties": {
+                  "agent_name": {
+                    "title": "Agent Name",
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "ok",
+                      "failed",
+                      "timeout"
+                    ],
+                    "title": "Status",
+                    "type": "string"
+                  },
+                  "data_completeness": {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "title": "Data Completeness",
+                    "type": "number"
+                  },
+                  "criticality": {
+                    "enum": [
+                      "critical",
+                      "degradable"
+                    ],
+                    "title": "Criticality",
+                    "type": "string"
+                  },
+                  "collected_at": {
+                    "format": "date-time",
+                    "title": "Collected At",
+                    "type": "string"
+                  },
+                  "payload": {
+                    "additionalProperties": true,
+                    "description": "Agent-specific structured output (e.g. metrics window, vendor status JSON, log slice).",
+                    "title": "Payload",
+                    "type": "object"
+                  },
+                  "errors": {
+                    "items": {
+                      "type": "string"
                     },
-                    {
-                        "source": "supervisor",
-                        "target": "__end__",
-                        "label": null
-                    },
-                    {
-                        "source": "supervisor",
-                        "target": "analyst",
-                        "label": null
-                    },
-                    {
-                        "source": "supervisor",
-                        "target": "researcher",
-                        "label": null
-                    },
-                    {
-                        "source": "supervisor",
-                        "target": "writer",
-                        "label": null
-                    },
-                    {
-                        "source": "writer",
-                        "target": "supervisor",
-                        "label": null
-                    }
-                ]
-            }
+                    "title": "Errors",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "agent_name",
+                  "status",
+                  "data_completeness",
+                  "criticality",
+                  "collected_at"
+                ],
+                "title": "EvidencePacket",
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "description": "Parallel-collected packets joined for Block 3 / Block 4 consumption.",
+            "properties": {
+              "incident_id": {
+                "title": "Incident Id",
+                "type": "string"
+              },
+              "packets": {
+                "items": {
+                  "$ref": "#/$defs/EvidencePacket"
+                },
+                "title": "Packets",
+                "type": "array"
+              },
+              "overall_completeness": {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "title": "Overall Completeness",
+                "type": "number"
+              },
+              "collected_at": {
+                "format": "date-time",
+                "title": "Collected At",
+                "type": "string"
+              },
+              "notes": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Notes",
+                "type": "array"
+              }
+            },
+            "required": [
+              "incident_id",
+              "packets",
+              "overall_completeness",
+              "collected_at"
+            ],
+            "title": "EvidenceBundle",
+            "type": "object"
+          },
+          "audit_log": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "One row per graph node, in execution order."
+          }
         }
-    ]
+      }
+    }
+  ]
 }
