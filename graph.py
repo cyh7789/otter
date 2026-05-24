@@ -260,18 +260,51 @@ def diagnosis_agent(state: State) -> dict:
             evidence_bundle_ref=trigger.incident_id,
         )
     else:
-        weights = SignalWeights(
-            metrics_weight=0.2, logs_weight=0.2, dependency_weight=0.2,
-            vendor_weight=0.2, eval_drift_weight=0.2,
-        )
-        diagnosis = DiagnosisOutput(
-            incident_id=trigger.incident_id,
-            root_cause="unknown",
-            root_cause_explanation="live LLM diagnosis not wired yet (v1 stub)",
-            incident_severity="LOW",
-            diagnosis_confidence=0.0,
-            signal_summary=weights,
-        )
+        # Live path: real Gemini call via langchain-google-genai, structured
+        # output bound to DiagnosisOutput so the node's contract holds even
+        # when the LLM is in the loop. Falls back to an honest "unknown"
+        # diagnosis if GOOGLE_API_KEY isn't set or the call raises — the
+        # demo recording on shot list Scene 3 requires at least one node
+        # to genuinely hit Gemini; this is that node.
+        import os
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            if not os.environ.get("GOOGLE_API_KEY"):
+                raise RuntimeError("GOOGLE_API_KEY not set")
+
+            model_id = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+            llm = ChatGoogleGenerativeAI(model=model_id, temperature=0)
+            structured = llm.with_structured_output(DiagnosisOutput)
+
+            prompt = (
+                "You are Otter's DiagnosisAgent in a governed LLM-runtime change-control workflow. "
+                "Given an IncidentTrigger and an EvidenceBundle (and optionally a DriftSignal), "
+                "produce a DiagnosisOutput. Pick exactly one root_cause from the enum. "
+                "incident_id MUST equal the trigger's incident_id. "
+                "signal_summary weights MUST sum to ~1.0 across the five buckets. "
+                "Keep root_cause_explanation under 400 chars and grounded in the evidence — "
+                "do not invent metric values that aren't in the bundle.\n\n"
+                f"IncidentTrigger:\n{trigger.model_dump_json(indent=2)}\n\n"
+                f"EvidenceBundle:\n{bundle.model_dump_json(indent=2)}\n\n"
+                f"DriftSignal:\n{drift.model_dump_json(indent=2) if drift else 'null'}\n"
+            )
+            diagnosis = structured.invoke(prompt)
+            # Hard-pin incident_id in case the model drifts.
+            diagnosis = diagnosis.model_copy(update={"incident_id": trigger.incident_id})
+        except Exception as exc:  # noqa: BLE001 — node must not break the graph
+            weights = SignalWeights(
+                metrics_weight=0.2, logs_weight=0.2, dependency_weight=0.2,
+                vendor_weight=0.2, eval_drift_weight=0.2,
+            )
+            diagnosis = DiagnosisOutput(
+                incident_id=trigger.incident_id,
+                root_cause="unknown",
+                root_cause_explanation=f"live diagnosis failed: {type(exc).__name__}: {exc}"[:400],
+                incident_severity="LOW",
+                diagnosis_confidence=0.0,
+                signal_summary=weights,
+            )
 
     return {
         "diagnosis": diagnosis,
