@@ -1,184 +1,464 @@
-"""Otter: Multi-agent supervisor pattern for UiPath AgentHack Track 2 (Maestro BPMN).
+"""Otter — Governed LLM Runtime Change Control graph (v1).
 
-Architecture:
-    START → supervisor → (analyst | researcher | writer) → supervisor → ... → END
+This is the BPMN happy path the 5/30 hackathon submission targets:
 
-The supervisor routes each turn to one of three specialists based on the conversation
-state. Specialists do their work and return to the supervisor, which decides whether
-to continue routing or finish.
+    START
+      └─ trigger_intake (IncidentTrigger in)
+           └─ [parallel: metrics_agent + vendor_status_agent]
+                └─ join → EvidenceBundle
+                     └─ [conditional: proactive only]
+                          ├─ eval_agent      → EvalBatchResult
+                          └─ drift_detector  → DriftSignal
+                     └─ diagnosis_agent      → DiagnosisOutput
+                          └─ routing_decision_agent → RoutingProposal
+                               └─ policy_gate       → PolicyDecision
+                                    └─ canary_monitor → KillSwitchDecision
+                                         └─ END
 
-This pattern maps cleanly onto BPMN 2.0:
-- supervisor = exclusive gateway
-- analyst / researcher / writer = task nodes
-- END = end event
+Every state hand-off is a Pydantic class from schemas.py. State is
+strongly typed so a node that emits the wrong shape fails at the
+boundary, not three nodes downstream (Codex high #4 prevention).
+
+Every node honours `state["fixture_mode"]`. In fixture mode the node
+returns deterministic mock data and never calls Gemini — this is the
+demo / CI path that lets us record demo videos and run on flaky
+network. In live mode the node would invoke an LLM; the v1 ship uses
+stubs for the LLM calls themselves and a follow-up commit will wire
+real `ChatGoogleGenerativeAI` invocations behind the same node
+contracts (so the graph shape doesn't change when LLMs come online).
 """
 
 from __future__ import annotations
 
-import os
-from typing import Annotated
+from datetime import datetime, timezone
+from typing import Annotated, Any, Optional
 
 from typing_extensions import TypedDict
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
+
+from schemas import (
+    DiagnosisOutput,
+    DriftSignal,
+    EvalBatchResult,
+    EvidenceBundle,
+    EvidencePacket,
+    IncidentTrigger,
+    KillSwitchDecision,
+    PolicyDecision,
+    RouteUtilityEstimate,
+    RoutingProposal,
+    SignalWeights,
+)
 
 
-class State(TypedDict):
-    """Shared state — messages accumulate, supervisor records next routing decision."""
+# ---- shared state ---------------------------------------------------------
 
-    messages: Annotated[list, add_messages]
-    next_agent: str
+class State(TypedDict, total=False):
+    """Typed lifecycle state. Every field is the corresponding Pydantic
+    instance from schemas.py — nodes consume and produce typed contracts,
+    not raw dicts."""
 
+    trigger: IncidentTrigger
+    metrics_packet: EvidencePacket
+    vendor_packet: EvidencePacket
+    evidence_bundle: EvidenceBundle
+    eval_result: EvalBatchResult
+    drift_signal: DriftSignal
+    diagnosis: DiagnosisOutput
+    routing_proposal: RoutingProposal
+    policy_decision: PolicyDecision
+    kill_switch: KillSwitchDecision
 
-def make_llm() -> ChatGoogleGenerativeAI:
-    return ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_MODEL", "gemini-3-flash-preview"),
-    )
-
-
-def _content_as_text(message) -> str:
-    """Normalize LangChain message content to plain string.
-
-    Gemini sometimes returns structured content (list of dict) — flatten for routing.
-    """
-    if isinstance(message.content, str):
-        return message.content
-    if isinstance(message.content, list):
-        parts = []
-        for item in message.content:
-            if isinstance(item, dict) and "text" in item:
-                parts.append(item["text"])
-            else:
-                parts.append(str(item))
-        return "\n".join(parts)
-    return str(message.content)
+    fixture_mode: bool
+    audit_log: Annotated[list[dict], lambda old, new: (old or []) + new]
 
 
-def supervisor(state: State) -> dict:
-    """Decides which specialist runs next, or FINISH if the task is complete."""
-    llm = make_llm()
-    system = SystemMessage(
-        content=(
-            "You are the Otter supervisor, coordinating three specialists:\n"
-            "- ANALYST: analyzes data, computes metrics, evaluates trade-offs\n"
-            "- RESEARCHER: gathers information, summarizes sources, contextualizes\n"
-            "- WRITER: drafts the final user-facing output\n\n"
-            "Look at the conversation so far. Respond with EXACTLY two lines:\n"
-            "NEXT: <ANALYST|RESEARCHER|WRITER|FINISH>\n"
-            "REASON: <one short sentence>\n\n"
-            "Rules:\n"
-            "- Choose FINISH only after WRITER has produced a polished final answer.\n"
-            "- Don't loop the same specialist twice unless needed.\n"
-            "- Typical flow: RESEARCHER → ANALYST → WRITER → FINISH."
-        )
-    )
-    response = llm.invoke([system, *state["messages"]])
-    content = _content_as_text(response)
-
-    next_agent = "FINISH"
-    for line in content.splitlines():
-        if line.upper().startswith("NEXT:"):
-            value = line.split(":", 1)[1].strip().upper().rstrip(".,!?")
-            if value in ("ANALYST", "RESEARCHER", "WRITER"):
-                next_agent = value.lower()
-            elif value == "FINISH":
-                next_agent = "FINISH"
-            break
-
+def _audit(node: str, payload: dict) -> dict:
+    """Helper: append a structured audit row from any node."""
     return {
-        "next_agent": next_agent,
-        "messages": [
-            HumanMessage(
-                content=f"[supervisor → {next_agent}]\n{content}",
-                name="supervisor",
-            )
-        ],
+        "audit_log": [
+            {
+                "node": node,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                **payload,
+            }
+        ]
     }
 
 
-TEAM_CONTEXT = (
-    "The Otter team has exactly three specialists, coordinated by a supervisor:\n"
-    "- analyst — analyzes data, computes metrics, evaluates trade-offs\n"
-    "- researcher — gathers information, summarizes sources, contextualizes\n"
-    "- writer — drafts final user-facing output\n"
-    "Stay in your assigned role. Do not invent other specialists "
-    "(e.g. 'editor', 'reviewer', 'critic'). The team is exactly these three."
-)
+# ---- Block 1: trigger intake ---------------------------------------------
+
+def trigger_intake(state: State) -> dict:
+    """Sync inline. The trigger arrives in state["trigger"] (caller-set);
+    this node just records the intake and is the natural place to add
+    dedup / correlation logic later."""
+    trigger = state["trigger"]
+    return {
+        **_audit("trigger_intake", {
+            "incident_id": trigger.incident_id,
+            "trigger_type": trigger.trigger_type,
+            "source": trigger.source,
+        }),
+    }
 
 
-def make_specialist(role: str, system_prompt: str):
-    """Factory for specialist agent nodes — each has a different system prompt."""
+# ---- Block 2: evidence agents (parallel) ---------------------------------
 
-    full_prompt = f"{system_prompt}\n\n{TEAM_CONTEXT}"
+def metrics_agent(state: State) -> dict:
+    """Collects live telemetry. Fixture mode returns a mock packet that
+    simulates an elevated error rate (the proactive demo scenario)."""
+    trigger = state["trigger"]
+    now = datetime.now(timezone.utc)
 
-    def node(state: State) -> dict:
-        llm = make_llm()
-        system = SystemMessage(content=full_prompt)
-        response = llm.invoke([system, *state["messages"]])
-        return {
-            "messages": [
-                HumanMessage(
-                    content=_content_as_text(response),
-                    name=role,
-                )
-            ]
-        }
+    if state.get("fixture_mode"):
+        payload = {"error_rate": 0.02, "baseline_error_rate": 0.005,
+                   "window_minutes": 15}
+        packet = EvidencePacket(
+            agent_name="MetricsAgent", status="ok",
+            data_completeness=1.0, criticality="critical",
+            collected_at=now, payload=payload,
+        )
+    else:
+        # TODO live: query metrics backend (Datadog / Prometheus / etc.).
+        # For now degrade to a "no live integration yet" signal rather than
+        # crashing — Codex high #3: vendor outage must not crash the entry.
+        packet = EvidencePacket(
+            agent_name="MetricsAgent", status="failed",
+            data_completeness=0.0, criticality="critical",
+            collected_at=now, payload={},
+            errors=["live metrics integration not wired yet (v1 stub)"],
+        )
 
-    return node
-
-
-analyst = make_specialist(
-    "analyst",
-    "You are the analyst specialist. Examine the user's request and any prior context, "
-    "then provide concise analysis: key metrics, comparisons, or trade-offs. "
-    "Be direct, no fluff. Keep response under 150 words.",
-)
-
-researcher = make_specialist(
-    "researcher",
-    "You are the researcher specialist. Gather and summarize relevant information for "
-    "the user's request based on your training knowledge. Note assumptions and "
-    "limitations. Keep response under 150 words.",
-)
-
-writer = make_specialist(
-    "writer",
-    "You are the writer specialist. Draft the final response to the user based on the "
-    "conversation so far (including prior analyst/researcher contributions). "
-    "Format clearly, structure for readability. This is the polished final answer.",
-)
+    return {
+        "metrics_packet": packet,
+        **_audit("metrics_agent", {"status": packet.status,
+                                    "completeness": packet.data_completeness}),
+    }
 
 
-def route_after_supervisor(state: State) -> str:
-    """Conditional edge: route based on supervisor's decision."""
-    next_agent = state.get("next_agent", "FINISH")
-    return END if next_agent == "FINISH" else next_agent
+def vendor_status_agent(state: State) -> dict:
+    """Polls vendor status pages. Fixture returns 'all green' to demonstrate
+    the silent-degradation scenario (metrics bad but vendor says ok)."""
+    trigger = state["trigger"]
+    now = datetime.now(timezone.utc)
+
+    if state.get("fixture_mode"):
+        payload = {"vendor": "google", "status": "operational",
+                   "last_incident_minutes_ago": 240}
+        packet = EvidencePacket(
+            agent_name="VendorStatusAgent", status="ok",
+            data_completeness=1.0, criticality="degradable",
+            collected_at=now, payload=payload,
+        )
+    else:
+        packet = EvidencePacket(
+            agent_name="VendorStatusAgent", status="failed",
+            data_completeness=0.0, criticality="degradable",
+            collected_at=now, payload={},
+            errors=["live vendor status integration not wired yet (v1 stub)"],
+        )
+
+    return {
+        "vendor_packet": packet,
+        **_audit("vendor_status_agent", {"status": packet.status}),
+    }
 
 
-def build_graph() -> StateGraph:
-    builder = StateGraph(State)
-    builder.add_node("supervisor", supervisor)
-    builder.add_node("analyst", analyst)
-    builder.add_node("researcher", researcher)
-    builder.add_node("writer", writer)
-
-    builder.add_edge(START, "supervisor")
-    builder.add_conditional_edges(
-        "supervisor",
-        route_after_supervisor,
-        {
-            "analyst": "analyst",
-            "researcher": "researcher",
-            "writer": "writer",
-            END: END,
-        },
+def join_evidence(state: State) -> dict:
+    """Joins the parallel packets into a single EvidenceBundle."""
+    packets = [state["metrics_packet"], state["vendor_packet"]]
+    completeness = sum(p.data_completeness for p in packets) / len(packets)
+    bundle = EvidenceBundle(
+        incident_id=state["trigger"].incident_id,
+        packets=packets,
+        overall_completeness=completeness,
+        collected_at=datetime.now(timezone.utc),
     )
-    # Specialists return to supervisor for next decision
-    builder.add_edge("analyst", "supervisor")
-    builder.add_edge("researcher", "supervisor")
-    builder.add_edge("writer", "supervisor")
+    return {
+        "evidence_bundle": bundle,
+        **_audit("join_evidence", {"packet_count": len(packets),
+                                    "completeness": completeness}),
+    }
+
+
+# ---- Block 3: eval + drift (conditional on proactive) --------------------
+
+def eval_agent(state: State) -> dict:
+    trigger = state["trigger"]
+    if state.get("fixture_mode"):
+        result = EvalBatchResult(
+            incident_id=trigger.incident_id, eval_status="ok",
+            scores={"helpfulness": 0.74, "groundedness": 0.81},
+            confidence=0.85,
+            per_item_refs=["fixture-trace-1", "fixture-trace-2"],
+            sample_count=50,
+            baseline_ref="fixture-baseline-v1",
+        )
+    else:
+        result = EvalBatchResult(
+            incident_id=trigger.incident_id, eval_status="failed",
+            scores={}, confidence=0.0, sample_count=0,
+        )
+    return {
+        "eval_result": result,
+        **_audit("eval_agent", {"status": result.eval_status,
+                                 "confidence": result.confidence}),
+    }
+
+
+def drift_detector_agent(state: State) -> dict:
+    trigger = state["trigger"]
+    if state.get("fixture_mode"):
+        signal = DriftSignal(
+            incident_id=trigger.incident_id,
+            drift_detected=True, severity_hint="HIGH",
+            test_name="PSI", affected_rubrics=["helpfulness"],
+            statistic=0.31, p_value=0.002,
+        )
+    else:
+        signal = DriftSignal(
+            incident_id=trigger.incident_id,
+            drift_detected=False, severity_hint="LOW",
+            test_name="PSI",
+        )
+    return {
+        "drift_signal": signal,
+        **_audit("drift_detector_agent", {"drift_detected": signal.drift_detected,
+                                           "severity_hint": signal.severity_hint}),
+    }
+
+
+# ---- Block 4: diagnosis + routing ----------------------------------------
+
+def diagnosis_agent(state: State) -> dict:
+    trigger = state["trigger"]
+    bundle = state["evidence_bundle"]
+    drift = state.get("drift_signal")
+
+    if state.get("fixture_mode"):
+        # Mock the silent-degradation scenario: metrics bad, vendor green,
+        # eval drift HIGH — diagnosis says vendor_silent_degradation.
+        weights = SignalWeights(
+            metrics_weight=0.55, logs_weight=0.0, dependency_weight=0.0,
+            vendor_weight=0.10, eval_drift_weight=0.35,
+        )
+        diagnosis = DiagnosisOutput(
+            incident_id=trigger.incident_id,
+            root_cause="vendor_silent_degradation",
+            root_cause_explanation=(
+                "Metrics show error_rate 4x baseline (0.02 vs 0.005). "
+                "Vendor status page reports all green but eval drift PSI "
+                f"hit HIGH on rubric 'helpfulness' "
+                f"(p={getattr(drift, 'p_value', 'n/a')}). Classic silent "
+                "regression — vendor swapped the underlying checkpoint."
+            ),
+            incident_severity="HIGH",
+            diagnosis_confidence=0.78,
+            affected_rubrics=["helpfulness"],
+            signal_summary=weights,
+            conflicting_signals=["vendor status green vs metrics red"],
+            evidence_bundle_ref=trigger.incident_id,
+        )
+    else:
+        weights = SignalWeights(
+            metrics_weight=0.2, logs_weight=0.2, dependency_weight=0.2,
+            vendor_weight=0.2, eval_drift_weight=0.2,
+        )
+        diagnosis = DiagnosisOutput(
+            incident_id=trigger.incident_id,
+            root_cause="unknown",
+            root_cause_explanation="live LLM diagnosis not wired yet (v1 stub)",
+            incident_severity="LOW",
+            diagnosis_confidence=0.0,
+            signal_summary=weights,
+        )
+
+    return {
+        "diagnosis": diagnosis,
+        **_audit("diagnosis_agent", {"root_cause": diagnosis.root_cause,
+                                      "severity": diagnosis.incident_severity,
+                                      "confidence": diagnosis.diagnosis_confidence}),
+    }
+
+
+def routing_decision_agent(state: State) -> dict:
+    trigger = state["trigger"]
+    diagnosis = state["diagnosis"]
+
+    if state.get("fixture_mode"):
+        candidates = [
+            RouteUtilityEstimate(
+                model_id="gemini-2.5-pro", provider="google",
+                quality_delta=0.12, cost_delta_usd=0.0008,
+                confidence=0.72, pareto_rank=0,
+                notes=["restores helpfulness rubric to baseline"],
+            ),
+            RouteUtilityEstimate(
+                model_id="claude-sonnet-4.5", provider="anthropic",
+                quality_delta=0.15, cost_delta_usd=0.0020,
+                confidence=0.68, pareto_rank=1,
+                notes=["higher quality, higher cost"],
+            ),
+        ]
+        proposal = RoutingProposal(
+            incident_id=trigger.incident_id,
+            candidates=candidates, recommended=candidates[0],
+            change_risk="MEDIUM", routing_confidence=0.72,
+            temporary_route_ttl_minutes=60,
+            route_type="quality_rescue", route_direction="forward",
+            notes=["recommend Pareto-optimal candidate as temporary route"],
+        )
+    else:
+        no_op = RouteUtilityEstimate(
+            model_id="current", provider="unknown",
+            quality_delta=0.0, cost_delta_usd=0.0,
+            confidence=0.0, pareto_rank=0,
+        )
+        proposal = RoutingProposal(
+            incident_id=trigger.incident_id,
+            candidates=[no_op], recommended=no_op,
+            change_risk="LOW", routing_confidence=0.0,
+            route_type="quality_rescue", route_direction="forward",
+            notes=["live routing decision not wired yet (v1 stub)"],
+        )
+
+    return {
+        "routing_proposal": proposal,
+        **_audit("routing_decision_agent", {
+            "recommended_model": proposal.recommended.model_id,
+            "change_risk": proposal.change_risk,
+            "route_type": proposal.route_type,
+        }),
+    }
+
+
+# ---- Block 4 end: policy gate (inline rules v1) --------------------------
+
+def policy_gate(state: State) -> dict:
+    """v1 inline rule executor — three rules. v2 will replace with a
+    Git-backed DMN rule set so policy changes are reviewable."""
+    trigger = state["trigger"]
+    proposal = state["routing_proposal"]
+    diagnosis = state["diagnosis"]
+
+    if diagnosis.incident_severity == "CRITICAL":
+        decision = PolicyDecision(
+            incident_id=trigger.incident_id,
+            decision="require_human",
+            reason="severity=CRITICAL — every CRITICAL change requires human approval",
+            rule_id="v1.severity-critical",
+        )
+    elif proposal.routing_confidence >= 0.6 and proposal.change_risk in ("LOW", "MEDIUM"):
+        decision = PolicyDecision(
+            incident_id=trigger.incident_id,
+            decision="require_canary",
+            reason=(
+                f"routing_confidence={proposal.routing_confidence:.2f} >= 0.6 and "
+                f"change_risk={proposal.change_risk} is MEDIUM-or-better — "
+                "auto-allow gated behind canary monitoring."
+            ),
+            rule_id="v1.confident-medium-risk",
+        )
+    else:
+        decision = PolicyDecision(
+            incident_id=trigger.incident_id,
+            decision="require_human",
+            reason=(
+                f"insufficient routing confidence ({proposal.routing_confidence:.2f}) "
+                f"or change_risk={proposal.change_risk} too high for auto-allow."
+            ),
+            rule_id="v1.fallback-human",
+        )
+
+    return {
+        "policy_decision": decision,
+        **_audit("policy_gate", {"decision": decision.decision,
+                                  "rule_id": decision.rule_id}),
+    }
+
+
+# ---- Block 5: canary monitor / kill switch -------------------------------
+
+def canary_monitor(state: State) -> dict:
+    """Compressed demo guard window. Fixture: 60s, no breach. v2 wires real
+    metric polling."""
+    trigger = state["trigger"]
+
+    if state.get("fixture_mode"):
+        decision = KillSwitchDecision(
+            incident_id=trigger.incident_id,
+            rollback=False,
+            reason="all guard metrics within bounds across 60s window",
+            metric_breached=None,
+            observed_at=datetime.now(timezone.utc),
+            canary_duration_seconds=60.0,
+        )
+    else:
+        decision = KillSwitchDecision(
+            incident_id=trigger.incident_id,
+            rollback=False,
+            reason="live canary monitoring not wired yet (v1 stub)",
+            observed_at=datetime.now(timezone.utc),
+            canary_duration_seconds=0.0,
+        )
+
+    return {
+        "kill_switch": decision,
+        **_audit("canary_monitor", {"rollback": decision.rollback,
+                                     "reason": decision.reason[:80]}),
+    }
+
+
+# ---- routing helpers ------------------------------------------------------
+
+def should_run_eval_drift(state: State) -> str:
+    """Conditional edge after evidence join: only proactive incidents run
+    the eval/drift pipeline. Reactive outages skip straight to diagnosis."""
+    if state["trigger"].trigger_type == "proactive":
+        return "eval_agent"
+    return "diagnosis_agent"
+
+
+# ---- builder --------------------------------------------------------------
+
+def build_graph() -> Any:
+    builder = StateGraph(State)
+
+    builder.add_node("trigger_intake", trigger_intake)
+    builder.add_node("metrics_agent", metrics_agent)
+    builder.add_node("vendor_status_agent", vendor_status_agent)
+    builder.add_node("join_evidence", join_evidence)
+    builder.add_node("eval_agent", eval_agent)
+    builder.add_node("drift_detector_agent", drift_detector_agent)
+    builder.add_node("diagnosis_agent", diagnosis_agent)
+    builder.add_node("routing_decision_agent", routing_decision_agent)
+    builder.add_node("policy_gate", policy_gate)
+    builder.add_node("canary_monitor", canary_monitor)
+
+    builder.add_edge(START, "trigger_intake")
+
+    # parallel fan-out: trigger_intake → both evidence agents
+    builder.add_edge("trigger_intake", "metrics_agent")
+    builder.add_edge("trigger_intake", "vendor_status_agent")
+
+    # join: both evidence agents → join_evidence
+    builder.add_edge("metrics_agent", "join_evidence")
+    builder.add_edge("vendor_status_agent", "join_evidence")
+
+    # conditional: proactive → eval/drift, reactive → straight to diagnosis
+    builder.add_conditional_edges(
+        "join_evidence",
+        should_run_eval_drift,
+        {"eval_agent": "eval_agent", "diagnosis_agent": "diagnosis_agent"},
+    )
+    builder.add_edge("eval_agent", "drift_detector_agent")
+    builder.add_edge("drift_detector_agent", "diagnosis_agent")
+
+    # linear tail: diagnosis → routing → policy → canary → END
+    builder.add_edge("diagnosis_agent", "routing_decision_agent")
+    builder.add_edge("routing_decision_agent", "policy_gate")
+    builder.add_edge("policy_gate", "canary_monitor")
+    builder.add_edge("canary_monitor", END)
 
     return builder.compile()
 
