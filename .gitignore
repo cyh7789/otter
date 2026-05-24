@@ -18,3 +18,7 @@ __uipath/
 
 # macOS
 .DS_Store
+
+
+# Internal Ryugu handoff notes (never commit)
+HANDOFF.md
