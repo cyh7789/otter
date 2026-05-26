@@ -91,9 +91,16 @@ def _audit(node: str, payload: dict) -> dict:
 def trigger_intake(state: State) -> dict:
     """Sync inline. The trigger arrives in state["trigger"] (caller-set);
     this node just records the intake and is the natural place to add
-    dedup / correlation logic later."""
+    dedup / correlation logic later.
+
+    Coerces dict → IncidentTrigger so downstream nodes can rely on
+    attribute access. UiPath Cloud runtime passes raw JSON dicts, unlike
+    main.py which Pydantic-validates first."""
     trigger = state["trigger"]
+    if isinstance(trigger, dict):
+        trigger = IncidentTrigger(**trigger)
     return {
+        "trigger": trigger,
         **_audit("trigger_intake", {
             "incident_id": trigger.incident_id,
             "trigger_type": trigger.trigger_type,
