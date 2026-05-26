@@ -2,16 +2,27 @@
 %% Regenerated on every `uipath init`.
 flowchart TB
   __start__(__start__)
-  supervisor(supervisor)
-  analyst(analyst)
-  researcher(researcher)
-  writer(writer)
+  trigger_intake(trigger_intake)
+  metrics_agent(metrics_agent)
+  vendor_status_agent(vendor_status_agent)
+  join_evidence(join_evidence)
+  eval_agent(eval_agent)
+  drift_detector_agent(drift_detector_agent)
+  diagnosis_agent(diagnosis_agent)
+  routing_decision_agent(routing_decision_agent)
+  policy_gate(policy_gate)
+  canary_monitor(canary_monitor)
   __end__(__end__)
-  __start__ --> supervisor
-  analyst --> supervisor
-  researcher --> supervisor
-  supervisor --> __end__
-  supervisor --> analyst
-  supervisor --> researcher
-  supervisor --> writer
-  writer --> supervisor
+  __start__ --> trigger_intake
+  diagnosis_agent --> routing_decision_agent
+  drift_detector_agent --> diagnosis_agent
+  eval_agent --> drift_detector_agent
+  join_evidence --> diagnosis_agent
+  join_evidence --> eval_agent
+  metrics_agent --> join_evidence
+  policy_gate --> canary_monitor
+  routing_decision_agent --> policy_gate
+  trigger_intake --> metrics_agent
+  trigger_intake --> vendor_status_agent
+  vendor_status_agent --> join_evidence
+  canary_monitor --> __end__

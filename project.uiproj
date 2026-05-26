@@ -1,6 +1,6 @@
 {
   "ProjectType": "Agent",
   "Name": "otter",
-  "Description": "Otter — Governed LLM Runtime Change Control. Detects vendor outage and silent model quality drift; proposes a route swap through Policy Gate + Canary Monitor. Built on LangGraph + Pydantic + Gemini, packaged for UiPath Maestro BPMN Track 2.",
-  "MainFile": "entry-points.json"
+  "Description": "Multi-agent supervisor orchestration via LangGraph for UiPath AgentHack Track 2",
+  "MainFile": null
 }
