@@ -1,0 +1,13 @@
+When your production LLM provider degrades, the question isn't do we switch. It's can we prove we switched safely, with approval, with a kill switch. Otter is the BPMN workflow that turns that hand-wave into governed change control.
+
+Ten nodes in a LangGraph pipeline, deployed on UiPath Maestro. Two evidence-gathering agents run in parallel — metrics and vendor status. A proactive branch fires eval and drift checks only when the trigger justifies it. Then diagnosis, routing proposal, policy gate, and canary monitor. Each node is its own auditable step.
+
+Every node hands the next a typed Pydantic contract. Strict schemas, no fuzzy payloads. The graph won't run if the data doesn't match.
+
+Here's a live run. Trigger is a latency spike incident. The two evidence agents fan out in parallel — the runtime, not just the diagram. Diagnosis identifies the root cause. Routing proposes a model switch. Policy gate checks the rules — severity not critical, routing confidence above threshold, auto-approve. Canary monitor arms the kill switch and watches.
+
+Now the canary regresses. Same workflow, different decision. The kill switch fires, the route rolls back. Every step logged, every decision traceable.
+
+The whole chain is auditable. No verbal handoffs between steps. Each node's evidence packet persisted, each policy decision references the evidence by ID.
+
+Apache two point zero, open source. UiPath AgentHack Track 2 Maestro BPMN. Governed change control for LLM runtimes.
