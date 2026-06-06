@@ -161,7 +161,7 @@ After publishing, the agents are available in UiPath Orchestrator. Configure the
 
 ## Coding Agent Disclosure
 
-This project leverages **Claude Code** (Anthropic) for development. Per UiPath AgentHack bonus criteria, prompt logs and conversation evidence are preserved in this repository.
+This project was built using **Claude Code** powered by **Claude Agent SDK** (Anthropic) as the primary coding agent, with **Codex** (OpenAI) for QA review. Per UiPath AgentHack bonus criteria, development logs and conversation evidence are preserved in the [`evidence/`](./evidence/) directory.
 
 ## Documentation
 

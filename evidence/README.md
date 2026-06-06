@@ -1,6 +1,6 @@
 # Coding Agent Evidence
 
-This project was built using **Claude Code** (Anthropic) as the primary coding agent, with **Codex** (OpenAI) for QA review.
+This project was built using **Claude Code** powered by **Claude Agent SDK** (Anthropic) as the primary coding agent, with **Codex** (OpenAI) for QA review.
 
 ## Evidence
 
