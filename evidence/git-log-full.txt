@@ -1,0 +1,120 @@
+commit d7d175b2c82797fbe887188960ae030223879d06
+Date: 2026-06-07 05:32:09 +0800
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+
+    docs: expand README per reviewer feedback — add project description, UiPath components, agent type, setup instructions
+
+commit f410340e75a2ba638794dc23a8703f653aead4e3
+Date: 2026-06-04 22:59:36 +0800
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+
+    chore: add submission deck + media screenshots
+
+commit 12e405d47146eb28aad49af0d8c45fc7bedeaa0d
+Date: 2026-06-04 20:07:58 +0800
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+
+    feat: demo video assets — Google TTS Fenrir voiceover + screenshots
+
+commit 4572574eca3176f2847985aed280cb5797dd1d6d
+Date: 2026-05-26 15:45:03 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    fix(graph): coerce trigger dict to IncidentTrigger in trigger_intake
+
+commit 262f0b0a44c6646d501bac097ffc69b8ad84477b
+Date: 2026-05-26 15:37:51 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    chore: bump version to 0.1.1 for UiPath Cloud upload
+
+commit 23c5817060309224ce8e31e99c5802fca139cce5
+Date: 2026-05-26 15:23:45 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    fix(uipath): align manifests with uipath SDK v2.10.64 schema
+
+commit 84b0684fc350b70be3401ed292fd952093f55ff8
+Date: 2026-05-24 19:22:00 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    feat(graph): wire diagnosis_agent live branch to real Gemini call
+
+commit f7f9cd96d92feaf693e0294c56c5e5b471263dc3
+Date: 2026-05-24 19:18:24 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    chore: add Apache-2.0 LICENSE
+
+commit 15201f2c3239452257590ba608127d0abf2cc167
+Date: 2026-05-24 19:12:56 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    chore: gitignore devpost/ (local form draft)
+
+commit 96860e9e7b9c3099072464c9446e7fab77efca42
+Date: 2026-05-24 18:53:22 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    chore: gitignore demo-video/ (local shot list)
+
+commit 525e3b342feef660d7916c8a6396f1bd2ec0ad83
+Date: 2026-05-24 18:38:16 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    fix(uipath): populate config so UiPath Cloud can actually import (Codex critical #2)
+
+commit 0b063be3cdfb3524e9eacc78848e680899fb4d7c
+Date: 2026-05-24 18:36:22 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    fix(main): argparse + --fixture + --health + structured guard (Codex high #3)
+
+commit 53d1c1795510771e516bfe0e4e31ca42b6e3c590
+Date: 2026-05-24 18:35:07 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    feat(graph): replace 4-node starter with v1 BPMN happy path
+
+commit 5bf5c093d0b462b844713c41a0a5f51c855bbb7a
+Date: 2026-05-24 18:28:39 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    feat(schemas): centralized Pydantic contracts for the v1 happy path
+
+commit e29dd13c4f182be0566f1c4b1ba5972beef7727f
+Date: 2026-05-19 21:21:43 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    otter: remove Splunk-as-default-source assumption from LogAnalyzer/Metrics specs
+
+commit 20d596106235b2f3310f3b765cf4cbef41932a54
+Date: 2026-05-19 20:34:18 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    otter: complete 10 core agent specs — Block 2 evidence + DiagnosisAgent + lifecycle agents
+
+commit 09e48474f2bdf20775274ffbb84972aaa931635e
+Date: 2026-05-19 20:26:22 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    otter: start W1 agent specs — EvalAgent / DriftDetectorAgent / RoutingDecisionAgent
+
+commit 14b3e7cab88006f77159b79b062a15af91274552
+Date: 2026-05-19 20:26:12 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    otter: integrate Round 3 GPT-5 Pro consult — Governed LLM Runtime Change Control
+
+commit 1718029be826155b29b42f8f007ec751dc16ebdf
+Date: 2026-05-18 14:38:08 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    otter: lock design v2 — Continuous LLM Agent Evaluation & Auto-Routing
+
+commit deb02eb5d078c094e4f2bc6d3d3f1eab6fc8cd2f
+Date: 2026-05-18 12:30:23 +0800
+Author: cyh7789 <catowner7@gmail.com>
+
+    otter: initial commit — LangGraph multi-agent supervisor + UiPath integration validated
+
